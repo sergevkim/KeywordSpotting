@@ -10,7 +10,7 @@ from torch.nn import (
     Sequential,
 )
 from torch.optim import Adam
-from torch.optim.optimizers import Optimizer
+from torch.optim.optimizer import Optimizer
 from torchaudio.transforms import MelSpectrogram
 
 
