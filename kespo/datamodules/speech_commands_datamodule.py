@@ -1,6 +1,4 @@
-import string
 from pathlib import Path
-from PIL import Image
 
 import einops
 import torch
@@ -55,8 +53,8 @@ class SpeechCommandsDataModule:
         self.batch_size = batch_size
         self.num_workers = num_workers
 
-    def prepare_data(self):
-        filenames = list()
+    def prepare_data(self) -> Dict[List[], List[int]]:
+        wav_filenames = list()
         targets = list()
 
         data = dict(
@@ -88,7 +86,7 @@ class SpeechCommandsDataModule:
             lengths=[train_size, val_size],
         )
 
-    def train_dataloader(self):
+    def train_dataloader(self) -> DataLoader:
         train_dataloader = DataLoader(
             dataset=self.train_dataset,
             batch_size=self.batch_size,
@@ -97,7 +95,7 @@ class SpeechCommandsDataModule:
 
         return train_dataloader
 
-    def val_dataloader(self):
+    def val_dataloader(self) -> DataLoader:
         val_dataloader = DataLoader(
             dataset=self.val_dataset,
             batch_size=self.batch_size,
