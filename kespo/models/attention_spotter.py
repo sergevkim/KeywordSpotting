@@ -4,10 +4,10 @@ import torch
 from torch import Tensor
 from torch.nn import (
     BCELoss,
-    Dropout,
     Module,
-    ReLU,
     Sequential,
+    Softmax,
+    Tanh,
 )
 from torch.optim import Adam
 from torch.optim.optimizer import Optimizer
@@ -17,13 +17,16 @@ from torchaudio.transforms import MelSpectrogram
 class Encoder(Module):
     def __init__(
             self,
+            input_size: int,
+            hidden_size: int,
+            num_layers: int,
         ):
         super().__init__()
         self.cnn = None
         self.rnn = GRU(
-            input_size=0,
-            hidden_size=0,
-            num_layers=0,
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
         )
 
     def forward(
@@ -33,21 +36,72 @@ class Encoder(Module):
         ) -> Tensor:
         x_1 = self.cnn(x)
 
-        output, hidden = self.rnn(
+        output, _ = self.rnn(
             input=x_1,
             h_0=hidden,
         )
 
-        return output, hidden
+        return output
+
+
+class AverageAttention(Module):
+    def __init__(
+            self,
+            T: int,
+        ):
+        super().__init__()
+        self.T = T
+        self.alpha = torch.full(
+            size=(1, T),
+            fill_value=1 / T,
+        )
+
+    def forward(
+            self,
+            x: Tensor,
+        ) -> Tensor:
+        return self.alpha
+
+
+class SoftAttention(Module):
+    def __init__(
+            self,
+        ):
+        super().__init__()
+        self.blocks_ordered_dict = OrderedDict(
+            Wb=Linear(
+                in_channels=None,
+                out_channels=None,
+            ),
+            tanh=Tanh(),
+            v=Linear(
+                in_channels=None,
+                out_channels=None,
+                biased=False,
+            ),
+            softmax=Softmax(),
+        )
+        self.alpher = Sequential(self.blocks)
+
+    def forward(
+            self,
+            x: Tensor,
+        ):
+        alpha = self.alpher(x)
+
+        return alpha
 
 
 class AttentionSpotter(Module):
     def __init__(
             self,
+            T: int,
             learning_rate: float=3e-4,
             device=torch.device('cpu'),
         ):
         super().__init__()
+        self.T = T
+
         self.device = device
         self.learning_rate = learning_rate
         self.criterion = BCELoss()
@@ -61,24 +115,42 @@ class AttentionSpotter(Module):
             n_mels=self.in_channels,
         ).to(self.device)
 
-        self.encoder = None
-        self.attention = None
+        self.encoder = Encoder(
+            input_size=None,
+            hidden_size=None,
+            num_layers=None,
+        )
+        self.attention = AverageAttention(
+            T=self.T,
+        )
+        self.epilog_ordered_dict = OrderedDict(
+            U=Linear(
+                in_channels=None,
+                out_channels=None,
+                biased=False
+            ),
+            softmax=Softmax(),
+        )
+        self.epilog = Sequential(self.epilog_ordered_dict)
 
     def forward(
             self,
             x: Tensor,
         ) -> Tensor:
-        x_1 = self.encoder(x)
-        x_2 = self.attention(x_1)
+        h = self.encoder(x)
+        alpha = self.attention(h)
 
-        return x_2
+        c = alpha * h
+        p = self.epilog(c)
+
+        return p
 
     def training_step(
             self,
             batch: Tensor,
             batch_idx: int,
         ) -> Tensor:
-        waveforms, targets, waveform_lengths, target_lengths = batch
+        waveforms, targets = batch
         waveforms = waveforms.to(self.device)
         targets = targets.to(self.device)
         mel_spectrograms = self.mel_spectrogramer(waveforms)
