@@ -1,10 +1,11 @@
 from pathlib import Path
+from typing import Dict, List, Union
 
 import einops
 import torch
+import torch.nn.functional as F
 import torchaudio
 from torch import Tensor
-from torch.nn import ZeroPad2d
 from torch.utils.data import Dataset, DataLoader
 
 from peach.utils import TokenConverter
@@ -13,30 +14,33 @@ from peach.utils import TokenConverter
 class SpeechCommandsDataset(Dataset):
     def __init__(
             self,
-            filenames,
-            targets,
-            max_waveform_length=17000,
+            wav_paths: List[Path],
+            targets: List[int],
+            max_waveform_length: int=16000,
         ):
-        self.filenames = filenames
+        self.wav_paths = wav_paths
         self.targets = targets
         self.max_waveform_length = max_waveform_length
-        self.max_target_length = max_target_length
 
     def __len__(self):
-        return len(self.filenames)
+        return len(self.wav_paths)
 
     def __getitem__(self, idx):
-        filename = self.filenames[idx]
-        waveform, sample_rate = torchaudio.load(filename)
+        wav_path = self.wav_paths[idx]
+        waveform, sample_rate = torchaudio.load(wav_path)
         waveform = einops.rearrange(waveform, 'b x -> (b x)')
 
-        padding = (0, self.max_waveform_length - len(waveform), 0, 0)
-        zero_padder = ZeroPad2d(padding=padding)
-        padded_waveform = zero_padder(waveform)
+        padded_waveform = F.pad(
+            input=waveform,
+            pad=(0, self.max_waveform_length - len(waveform)),
+            mode='constant',
+            value=0,
+        )
+        target = torch.tensor(self.targets[idx])
 
         result = (
             padded_waveform,
-            padded_target,
+            target,
         )
 
         return result
@@ -53,12 +57,19 @@ class SpeechCommandsDataModule:
         self.batch_size = batch_size
         self.num_workers = num_workers
 
-    def prepare_data(self) -> Dict[List[], List[int]]:
-        wav_filenames = list()
+    @staticmethod
+    def prepare_data(
+            data_dir: Path,
+            keywords: List[str],
+        ) -> Dict[str, List[Union[Path, str]]]:
+        wav_paths = list(f for f in data_dir.glob('**/*.wav'))
         targets = list()
-
+        for p in wav_paths:
+            flag = p.parents[0].name in keywords
+            targets.append(int(flag))
+        #TODO target: float?
         data = dict(
-            filenames=wav_filenames,
+            wav_paths=wav_paths,
             targets=targets,
         )
 
@@ -68,12 +79,15 @@ class SpeechCommandsDataModule:
             self,
             val_ratio,
         ):
-        data = self.prepare_data()
-        wav_filenames = data['filenames']
+        data = self.prepare_data(
+            data_dir=self.data_dir,
+            keywords=['right', 'marvin'],
+        )
+        wav_paths = data['wav_paths']
         targets = data['targets']
 
-        full_dataset = LJSpeechDataset(
-            filenames=wav_filenames,
+        full_dataset = SpeechCommandsDataset(
+            wav_paths=wav_paths,
             targets=targets,
         )
 

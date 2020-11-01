@@ -1,12 +1,14 @@
 from collections import OrderedDict
 
+import einops
 import torch
 from torch import Tensor
 from torch.nn import (
-    BCELoss,
+    CrossEntropyLoss,
+    GRU,
     Module,
+    Linear,
     Sequential,
-    Softmax,
     Tanh,
 )
 from torch.optim import Adam
@@ -17,9 +19,9 @@ from torchaudio.transforms import MelSpectrogram
 class Encoder(Module):
     def __init__(
             self,
-            input_size: int,
-            hidden_size: int,
-            num_layers: int,
+            input_size: int=40,
+            hidden_size: int=128,
+            num_layers: int=1,
         ):
         super().__init__()
         self.cnn = None
@@ -32,13 +34,12 @@ class Encoder(Module):
     def forward(
             self,
             x: Tensor,
-            hidden: Tensor,
         ) -> Tensor:
-        x_1 = self.cnn(x)
+        #x_1 = self.cnn(x)
+        x_1 = x
 
-        output, _ = self.rnn(
+        output, hidden = self.rnn(
             input=x_1,
-            h_0=hidden,
         )
 
         return output
@@ -51,16 +52,18 @@ class AverageAttention(Module):
         ):
         super().__init__()
         self.T = T
-        self.alpha = torch.full(
-            size=(1, T),
-            fill_value=1 / T,
-        )
 
     def forward(
             self,
             x: Tensor,
         ) -> Tensor:
-        return self.alpha
+        alpha = torch.full(
+            size=(x.shape[0], self.T),
+            fill_value=1 / self.T,
+        )
+        alpha = einops.rearrange(alpha, 'h (w 1) -> h w 1')
+
+        return alpha
 
 
 class SoftAttention(Module):
@@ -69,15 +72,15 @@ class SoftAttention(Module):
         ):
         super().__init__()
         self.blocks_ordered_dict = OrderedDict(
-            Wb=Linear(
+            Wb=Linear(#TODO
                 in_channels=None,
                 out_channels=None,
             ),
             tanh=Tanh(),
             v=Linear(
-                in_channels=None,
-                out_channels=None,
-                biased=False,
+                in_features=None,
+                out_features=None,
+                bias=False,
             ),
             softmax=Softmax(),
         )
@@ -96,6 +99,8 @@ class AttentionSpotter(Module):
     def __init__(
             self,
             T: int,
+            in_channels: int=40,
+            hidden_size: int=128,
             learning_rate: float=3e-4,
             device=torch.device('cpu'),
         ):
@@ -104,32 +109,32 @@ class AttentionSpotter(Module):
 
         self.device = device
         self.learning_rate = learning_rate
-        self.criterion = BCELoss()
+        self.criterion = CrossEntropyLoss()
         self.mel_spectrogramer = MelSpectrogram(
-            n_fft=1024,
-            sample_rate=22000,
-            win_length=1024,
-            hop_length=256,
-            f_min=0,
-            f_max=800,
-            n_mels=self.in_channels,
+            #n_fft=1024,
+            sample_rate=16000,
+            #win_length=1024,
+            #hop_length=256,
+            #f_min=0,
+            #f_max=800,
+            n_mels=in_channels,
         ).to(self.device)
 
         self.encoder = Encoder(
-            input_size=None,
-            hidden_size=None,
-            num_layers=None,
+            input_size=in_channels,
+            hidden_size=hidden_size,
+            num_layers=1,
         )
         self.attention = AverageAttention(
             T=self.T,
         )
         self.epilog_ordered_dict = OrderedDict(
             U=Linear(
-                in_channels=None,
-                out_channels=None,
-                biased=False
+                in_features=hidden_size,
+                out_features=3,
+                bias=False,
             ),
-            softmax=Softmax(),
+            #softmax=Softmax(), #TODO remove
         )
         self.epilog = Sequential(self.epilog_ordered_dict)
 
@@ -140,7 +145,9 @@ class AttentionSpotter(Module):
         h = self.encoder(x)
         alpha = self.attention(h)
 
-        c = alpha * h
+        c_0 = alpha * h
+
+        c = (alpha * h).sum(dim=1)
         p = self.epilog(c)
 
         return p
@@ -153,13 +160,14 @@ class AttentionSpotter(Module):
         waveforms, targets = batch
         waveforms = waveforms.to(self.device)
         targets = targets.to(self.device)
-        mel_spectrograms = self.mel_spectrogramer(waveforms)
+        mel_spec = self.mel_spectrogramer(waveforms)
+        transposed_mel_spec = einops.rearrange(mel_spec, 'bs w h -> bs h w')
 
-        predictions = self(mel_spectrograms)
+        predictions = self(torch.log(transposed_mel_spec))
 
         loss = self.criterion(
-            log_probs=log_probs,
-            targets=targets,
+            input=predictions,
+            target=targets,
         )
 
         return loss

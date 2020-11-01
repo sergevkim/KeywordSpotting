@@ -1,4 +1,4 @@
-#Keyword Spotting
+# Keyword Spotting
 
 PyTorch implementation of the article https://arxiv.org/pdf/1803.10916.pdf
 

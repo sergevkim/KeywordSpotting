@@ -1,16 +1,19 @@
 from pathlib import Path
 
 import torch
+import torch.nn.utils as utils
+from torch.nn import Module
+from torch.optim.optimizer import Optimizer
 import tqdm
 
 
 class Trainer:
     def __init__(
             self,
-            logger,
-            max_epoch,
-            verbose,
-            version,
+            logger=None,
+            max_epoch: int=1,
+            verbose: bool=False,
+            version: str='v0.0',
         ):
         self.logger = logger
         self.max_epoch = max_epoch
@@ -19,8 +22,8 @@ class Trainer:
 
     def save_checkpoint(
             self,
-            model,
-            optimizer,
+            model: Module,
+            optimizer: Optimizer,
             epoch: int,
             checkpoints_dir: Path,
         ):
@@ -44,11 +47,9 @@ class Trainer:
         model.train()
 
         for batch_idx, batch in enumerate(tqdm.tqdm(train_dataloader)):
-            for b in batch:
-                print(b.shape)
             loss = model.training_step(batch, batch_idx)
             loss.backward()
-            clip_grad_norm_(parameters=model.parameters(), max_norm=10)
+            utils.clip_grad_norm_(parameters=model.parameters(), max_norm=10)
             optimizer.step()
             optimizer.zero_grad()
             model.training_step_end()
